@@ -10,6 +10,14 @@ cargo run --release -- --demo
 
 Rust **1.88+**. Use a Unicode/truecolor terminal with a monospace font, **80 × 28 minimum**, ideally **100 × 30** or larger. No assets, services, accounts, or network access are needed to play after building. Ratatui 0.30.2 is the only direct dependency; its matching Crossterm backend supplies input and terminal control.
 
+## Screenshots
+
+Captured from a live **100 × 30** truecolor terminal running `--demo`.
+
+![Title screen with a candlelit 3D jack-o’-lantern, moon, and ghosts](docs/screenshots/title.png)
+
+![Gameplay with Jack flying through cemetery gates and a score of 9](docs/screenshots/gameplay.png)
+
 ## Controls
 
 | Key | Action |
