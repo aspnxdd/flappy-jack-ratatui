@@ -1,0 +1,13 @@
+[package]
+name = "flappy-jack"
+version = "0.1.0"
+edition = "2024"
+description = "A candlelit, pumpkin-powered Halloween terminal game"
+license = "MIT"
+
+[dependencies]
+ratatui = { version = "0.30.2", default-features = false, features = ["crossterm"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
