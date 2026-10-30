@@ -12,9 +12,9 @@ const FLAP_VELOCITY: f32 = -10.8;
 const MAX_FALL_SPEED: f32 = 16.0;
 const BASE_SPEED: f32 = 16.0;
 const MAX_SPEED: f32 = 23.0;
-const GATE_SPACING: f32 = 36.0;
-const MAX_GAP_HALF: f32 = 4.5;
-const MIN_GAP_HALF: f32 = 3.5;
+const GATE_SPACING: f32 = 44.0;
+const MAX_GAP_HALF: f32 = 5.5;
+const MIN_GAP_HALF: f32 = 4.5;
 const MAX_GAP_SHIFT: f32 = 3.0;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -375,7 +375,7 @@ mod tests {
 
     #[test]
     fn difficulty_and_adjacent_gap_shift_are_bounded() {
-        for gates_passed in [0, 20, 40, u32::MAX] {
+        for (gates_passed, expected_gap_half) in [(0, 5.5), (20, 5.0), (40, 4.5), (u32::MAX, 4.5)] {
             let mut game = open_game();
             game.gates_passed = gates_passed;
             assert!((BASE_SPEED..=MAX_SPEED).contains(&game.speed()));
@@ -383,13 +383,13 @@ mod tests {
                 game.spawn_gate(80.0 + index as f32 * GATE_SPACING);
             }
             for gate in &game.gates {
-                assert!((MIN_GAP_HALF..=MAX_GAP_HALF).contains(&gate.gap_half));
+                assert_eq!(gate.gap_half, expected_gap_half);
                 assert!(gate.gap_y - gate.gap_half >= 1.0);
                 assert!(gate.gap_y + gate.gap_half <= HEIGHT - 1.0);
             }
             for pair in game.gates.windows(2) {
                 assert!((pair[1].gap_y - pair[0].gap_y).abs() <= MAX_GAP_SHIFT + 0.00001);
-                assert_eq!(pair[1].x - pair[0].x, GATE_SPACING);
+                assert_eq!(pair[1].x - pair[0].x, 44.0);
             }
             assert_eq!(game.candies.len(), 100);
             if gates_passed >= 40 {

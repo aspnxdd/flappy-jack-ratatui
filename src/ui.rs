@@ -249,7 +249,7 @@ fn cemetery(buf: &mut Buffer, area: Rect, time: f32) {
 
 fn little_jack(buf: &mut Buffer, x: i32, y: i32, game: &Game) {
     let flapping = game.flap_time < 0.16;
-    let leaf_y = y - if flapping { 3 } else { 2 };
+    let leaf_y = y - if flapping { 4 } else { 3 };
     put(
         buf,
         x - 3,
@@ -266,42 +266,45 @@ fn little_jack(buf: &mut Buffer, x: i32, y: i32, game: &Game) {
     );
     put(buf, x - 4, leaf_y, '❧', Color::Rgb(125, 159, 71));
     put(buf, x + 4, leaf_y, '☙', Color::Rgb(125, 159, 71));
-    put(buf, x, y - 2, '╹', Color::Rgb(113, 127, 58));
-    for (i, c) in "▄███▄".chars().enumerate() {
-        put(buf, x - 2 + i as i32, y - 1, c, ORANGE);
-    }
+    put(buf, x, y - 3, '╻', Color::Rgb(113, 127, 58));
     let worried = game.danger() > 0.45;
-    let face = if worried {
-        "◖◉█◉◗"
-    } else {
-        "◖▲█▲◗"
-    };
-    for (i, c) in face.chars().enumerate() {
-        put(
-            buf,
-            x - 2 + i as i32,
-            y,
-            c,
-            if i == 1 || i == 3 {
-                Style::new().fg(CANDLE).bg(Color::Rgb(198, 77, 13))
-            } else {
-                Style::new().fg(ORANGE)
-            },
-        );
-    }
-    let mouth = if worried {
-        "╰─o─╯"
-    } else {
-        "╰v^v╯"
-    };
-    for (i, c) in mouth.chars().enumerate() {
-        put(
-            buf,
-            x - 2 + i as i32,
-            y + 1,
-            c,
-            if i == 0 || i == 4 { ORANGE } else { CANDLE },
-        );
+    // Two square pixels per cell keep the shaded body and carved face connected.
+    let sprite = [
+        "   hhM   ",
+        " hhoMoss ",
+        if worried { "heeoMoees" } else { "hoeoMoeos" },
+        "heeoMoees",
+        "hoooeooos",
+        if worried { "hoooeooos" } else { "hoeoMoeos" },
+        if worried { " sooeoos " } else { " soeeeos " },
+        "  sssss  ",
+    ];
+    for (row, pair) in sprite.as_chunks::<2>().0.iter().enumerate() {
+        for col in 0..9 {
+            let px = x - 4 + col as i32;
+            let py = y - 2 + row as i32;
+            if px < i32::from(buf.area.left())
+                || py < i32::from(buf.area.top())
+                || px >= i32::from(buf.area.right())
+                || py >= i32::from(buf.area.bottom())
+            {
+                continue;
+            }
+            let pixels = [pair[0].as_bytes()[col], pair[1].as_bytes()[col]];
+            if pixels == *b"  " {
+                continue;
+            }
+            let cell = &mut buf[(px as u16, py as u16)];
+            let [top, bottom] = pixels.map(|pixel| match pixel {
+                b'h' => Color::Rgb(255, 158, 48),
+                b'o' => ORANGE,
+                b'M' => Color::Rgb(198, 77, 13),
+                b's' => Color::Rgb(143, 48, 16),
+                b'e' => CANDLE,
+                _ => cell.bg,
+            });
+            cell.set_char('▀').set_fg(top).set_bg(bottom);
+        }
     }
     if flapping {
         put(buf, x - 4, y + 1, '·', Color::Rgb(123, 81, 43));
@@ -368,6 +371,44 @@ mod tests {
     use ratatui::{Terminal, backend::TestBackend};
 
     #[test]
+    fn little_jack_is_rounded_shaded_and_keeps_its_expressions() {
+        let area = Rect::new(0, 0, 21, 15);
+        let mut resting =
+            Buffer::filled(area, ratatui::buffer::Cell::new("·").set_bg(NIGHT).clone());
+        let game = Game::new(42);
+        little_jack(&mut resting, 10, 7, &game);
+        assert_eq!(resting[(6, 5)].symbol(), "·", "corners stay transparent");
+        assert_eq!(
+            resting[(7, 5)].fg,
+            NIGHT,
+            "curved shoulder leaves the top clear"
+        );
+        assert_eq!(resting[(7, 5)].bg, Color::Rgb(255, 158, 48));
+        assert_eq!(resting[(10, 7)].fg, CANDLE, "carved nose");
+        assert_eq!(resting[(10, 8)].fg, CANDLE, "smiling mouth");
+        assert_eq!(resting[(6, 6)].fg, Color::Rgb(255, 158, 48));
+        assert_eq!(resting[(14, 6)].fg, Color::Rgb(143, 48, 16));
+
+        let mut worried_game = game.clone();
+        worried_game.y = 1.0;
+        let mut worried = Buffer::empty(area);
+        little_jack(&mut worried, 10, 7, &worried_game);
+        assert_eq!(resting[(7, 6)].fg, ORANGE);
+        assert_eq!(worried[(7, 6)].fg, CANDLE, "eyes widen near danger");
+        assert_ne!(resting[(9, 8)].fg, worried[(9, 8)].fg);
+
+        let mut flapping_game = game;
+        flapping_game.flap();
+        let mut flapping = Buffer::empty(area);
+        little_jack(&mut flapping, 10, 7, &flapping_game);
+        assert_eq!(resting[(7, 4)].symbol(), "╱");
+        assert_eq!(flapping[(7, 3)].symbol(), "╲");
+        for (x, y) in [(0, 0), (20, 14), (-3, -3), (24, 18)] {
+            little_jack(&mut flapping, x, y, &flapping_game);
+        }
+    }
+
+    #[test]
     fn colliding_core_always_visibly_overlaps_a_gate_tip_at_every_size() {
         for (w, h) in [(80, 28), (100, 30), (160, 50)] {
             let area = flight_area(Rect::new(0, 0, w, h));
@@ -376,7 +417,7 @@ mod tests {
                 app.phase = Phase::Playing;
                 app.game.gates.truncate(1);
                 let gate = &mut app.game.gates[0];
-                gate.x = game::PLAYER_X - 1.0;
+                gate.x = game::PLAYER_X + 1.0;
                 let boundary = gate.gap_y + if top { -gate.gap_half } else { gate.gap_half };
                 app.game.y = boundary
                     + if top {
@@ -387,11 +428,17 @@ mod tests {
                 let tip_x = world_x(area, gate.x + game::GATE_WIDTH) as u16;
                 let tip_y = world_y(area, boundary);
                 let core_y = world_y(area, app.game.y);
-                assert!(if top {
-                    core_y - 1 <= tip_y
-                } else {
-                    core_y + 1 >= tip_y
-                });
+                let core_x = world_x(area, game::PLAYER_X) as u16;
+                let mut sprite =
+                    Buffer::filled(area, ratatui::buffer::Cell::new(" ").set_bg(NIGHT).clone());
+                little_jack(&mut sprite, i32::from(core_x), core_y, &app.game);
+                let contact = &sprite[(core_x, tip_y as u16)];
+                assert_eq!(contact.symbol(), "▀");
+                assert_ne!(contact.fg, NIGHT, "top half covers the collision contact");
+                assert_ne!(
+                    contact.bg, NIGHT,
+                    "bottom half covers the collision contact"
+                );
                 let mut terminal = Terminal::new(TestBackend::new(w, h)).unwrap();
                 terminal.draw(|f| draw(f, &app)).unwrap();
                 assert_eq!(

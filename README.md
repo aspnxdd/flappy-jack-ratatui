@@ -27,7 +27,7 @@ Captured from a live **100 × 30** truecolor terminal running `--demo`.
 | P or Escape | Pause / resume |
 | Q or Ctrl-C | Quit |
 
-Thread the gaps in the crooked cemetery gates. **Each gate is +1; candy ◆ is +3.** Candy does not increase difficulty. Gate speed and gap size gradually become harder, then stop increasing. Your collision box is deliberately smaller than Jack’s decorative leaves. Watch his eyes when danger approaches.
+Thread the gaps in the crooked cemetery gates. **Each gate is +1; candy ◆ is +3.** Candy does not increase difficulty. Gate openings shrink from 11 to 9 world units, with 39 units of clear space between columns. Gate speed and gap size gradually become harder, then stop increasing. Your collision box is deliberately smaller than Jack’s visible body and decorative leaves. Watch his eyes when danger approaches.
 
 Starting and restarting **do not flap**. Supported terminals are asked to report repeat/release events: repeats are ignored and release permits an immediate fresh tap. Legacy terminals get a 350 ms quiet-key guard; they cannot distinguish a new press from a held key whose first repeat arrives later than that. Release Space after awakening, then tap to fly. Death has a short seed burst; **R retries immediately**, with Space available after the guard. Shrinking the terminal freezes physics and shows “Resize to continue”; restoring its size resumes without catching up the missed time. Manual pause remains paused through a resize.
 
@@ -39,7 +39,7 @@ Best scores are saved atomically to `$XDG_DATA_HOME/flappy-jack/best-score`, or 
 - `src/title.rs`: shared title/game-over composition, procedural wordmark, moon and subtle ghosts.
 - `src/game.rs`: pure seeded 100 × 24 world; 120 Hz fixed-step physics, conservative hitboxes, bounded/passable gaps, candy and score-once gates. No rendering or terminal I/O.
 - `src/app.rs`: title/playing/paused/game-over states, integer fractional-tick accumulator, input policy and persistence integration.
-- `src/ui.rs`: centered cemetery, gates, small expressive pumpkin, leaves, seed burst, HUD and overlays. The playfield grows to at most 100 × 24 cells so the visible core always covers its inner hitbox; partially solid gate-boundary rows retain their visible spikes.
+- `src/ui.rs`: centered cemetery, gates, shaded half-cell pumpkin sprite with carved expressions, leaves, seed burst, HUD and overlays. The playfield grows to at most 100 × 24 cells so the visible core always covers its inner hitbox; partially solid gate-boundary rows retain their visible spikes.
 - `src/terminal.rs`: deadline-driven 30 FPS rendering, resize handling, raw/alternate-screen guard, error and panic cleanup. Animation and physics do not depend on rendering cadence.
 - `src/storage.rs`: small validated best-score file and atomic replacement.
 
@@ -53,7 +53,7 @@ cargo clippy --all-targets -- -D warnings
 cargo test
 ```
 
-The 39 tests cover geometry/depth/rotation and carved illumination, screen sizes/states, visible collision fairness, exact collision contacts, scoring once, candy bonuses, capped/passable difficulty, render-rate independence, three-minute autopilot survival across seeds, pause/resize, delayed repeat/release handling, CLI validation and isolated storage failures.
+The 40 tests cover geometry/depth/rotation and carved illumination, sprite shape/shading/expressions, screen sizes/states, visible collision fairness, exact collision contacts, scoring once, candy bonuses, capped/passable difficulty, render-rate independence, three-minute autopilot survival across seeds, pause/resize, delayed repeat/release handling, CLI validation and isolated storage failures.
 
 Also verified on Linux in real PTYs: title/gameplay output at 80 × 28, 100 × 30 and 160 × 50; start/flap/death/retry/pause/resize/quit; score 9 saved and loaded by a fresh process; enhanced keyboard events; and terminal restoration after injected panic, initialization and drawing failures. Title rendering used about 5% of one CPU core at 100 × 30 in the local release build (hardware-dependent).
 
