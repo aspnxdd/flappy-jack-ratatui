@@ -9,8 +9,8 @@ use ratatui::{
     crossterm::{
         cursor::Show,
         event::{
-            self, Event, KeyboardEnhancementFlags, PopKeyboardEnhancementFlags,
-            PushKeyboardEnhancementFlags,
+            self, DisableFocusChange, EnableFocusChange, Event, KeyboardEnhancementFlags,
+            PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
         },
         execute,
         style::ResetColor,
@@ -27,8 +27,14 @@ const TICK_INTERVAL: Duration = Duration::from_nanos(1_000_000_000 / 120 + 1);
 const MAX_EVENTS: usize = 64;
 
 static KEYBOARD_PUSHED: AtomicBool = AtomicBool::new(false);
+static FOCUS_ENABLED: AtomicBool = AtomicBool::new(false);
 
-fn restore_keyboard() {
+fn restore_input_modes() {
+    if FOCUS_ENABLED.swap(false, Ordering::Relaxed)
+        && execute!(stdout(), DisableFocusChange).is_err()
+    {
+        let _ = execute!(stderr(), DisableFocusChange);
+    }
     if KEYBOARD_PUSHED.swap(false, Ordering::Relaxed)
         && execute!(stdout(), PopKeyboardEnhancementFlags).is_err()
     {
@@ -40,7 +46,7 @@ struct TerminalGuard;
 
 impl Drop for TerminalGuard {
     fn drop(&mut self) {
-        restore_keyboard();
+        restore_input_modes();
         let restored = ratatui::try_restore();
         let cursor = execute!(stdout(), Show, ResetColor);
         if restored.is_err() || cursor.is_err() {
@@ -57,14 +63,17 @@ pub fn run(app: &mut App, mut draw: impl FnMut(&mut Frame, &App)) -> io::Result<
     let flags = KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
         | KeyboardEnhancementFlags::REPORT_EVENT_TYPES
         | KeyboardEnhancementFlags::REPORT_ALL_KEYS_AS_ESCAPE_CODES;
+    let hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        restore_input_modes();
+        hook(info);
+    }));
+    // Arm cleanup before writing so even a partially failed enable is undone.
+    FOCUS_ENABLED.store(true, Ordering::Relaxed);
+    execute!(stdout(), EnableFocusChange)?;
     // Unsupported terminals ignore this; legacy Windows reports Unsupported and keeps native events.
     if execute!(stdout(), PushKeyboardEnhancementFlags(flags)).is_ok() {
         KEYBOARD_PUSHED.store(true, Ordering::Relaxed);
-        let hook = std::panic::take_hook();
-        std::panic::set_hook(Box::new(move |info| {
-            restore_keyboard();
-            hook(info);
-        }));
     }
     let size = terminal.size()?;
     app.advance(Duration::ZERO, too_small(size.width, size.height));
@@ -95,6 +104,11 @@ pub fn run(app: &mut App, mut draw: impl FnMut(&mut Frame, &App)) -> io::Result<
             for _ in 0..MAX_EVENTS {
                 match event::read()? {
                     Event::Key(key) => app.key(key),
+                    Event::FocusLost => {
+                        app.focus_lost();
+                        previous = Instant::now();
+                        next_frame = previous;
+                    }
                     Event::Resize(width, height) => {
                         app.advance(Duration::ZERO, too_small(width, height));
                         previous = Instant::now();

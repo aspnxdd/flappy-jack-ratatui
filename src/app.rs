@@ -24,6 +24,9 @@ pub struct App {
     pub game: Game,
     pub seconds: f32,
     pub best: u32,
+    pub new_best: bool,
+    pub score_save_failed: bool,
+    pub challenge_seed: Option<u64>,
     pub demo: bool,
     pub quit: bool,
     pub too_small: bool,
@@ -37,6 +40,11 @@ pub struct App {
 
 impl App {
     pub fn new(demo: bool) -> Self {
+        Self::with_seed(demo, None)
+    }
+
+    pub fn with_seed(demo: bool, challenge_seed: Option<u64>) -> Self {
+        let seed = challenge_seed.unwrap_or(SEED);
         // Unit tests and attract recordings must never read or write a player's record.
         let score_path = if demo || cfg!(test) {
             None
@@ -46,9 +54,12 @@ impl App {
         let best = score_path.as_deref().map(storage::load).unwrap_or(0);
         Self {
             phase: Phase::Title,
-            game: Game::new(SEED),
+            game: Game::new(seed),
             seconds: 0.0,
             best,
+            new_best: false,
+            score_save_failed: false,
+            challenge_seed,
             demo,
             quit: false,
             too_small: false,
@@ -56,7 +67,7 @@ impl App {
             clock: Duration::ZERO,
             guard: None,
             title_ticks: 0,
-            seed: SEED,
+            seed,
             score_path,
         }
     }
@@ -90,13 +101,13 @@ impl App {
                     if !self.game.alive {
                         self.phase = Phase::GameOver;
                         self.arm_guard(KeyCode::Char(' '));
-                        if self.game.score > self.best {
-                            self.best = self.game.score;
-                            if !self.demo
-                                && let Some(path) = &self.score_path
-                            {
-                                let _ = storage::save(path, self.best);
-                            }
+                        self.new_best = !self.demo && self.game.score > self.best;
+                        self.best = self.best.max(self.game.score);
+                        if !self.demo && (self.new_best || self.score_save_failed) {
+                            self.score_save_failed = self
+                                .score_path
+                                .as_deref()
+                                .is_none_or(|path| storage::save(path, self.best).is_err());
                         }
                     }
                 }
@@ -157,11 +168,20 @@ impl App {
         self.arm_guard(code);
     }
 
+    pub fn focus_lost(&mut self) {
+        if !self.demo && self.phase == Phase::Playing {
+            self.phase = Phase::Paused;
+            self.accumulator = 0;
+            self.guard = None;
+        }
+    }
+
     fn start(&mut self) {
         self.game = Game::new(self.seed);
-        if !self.demo {
+        if !self.demo && self.challenge_seed.is_none() {
             self.seed = self.seed.wrapping_add(1);
         }
+        self.new_best = false;
         self.phase = Phase::Playing;
     }
 
@@ -304,6 +324,67 @@ mod tests {
     }
 
     #[test]
+    fn focus_loss_pauses_a_real_flight_without_catchup_and_requires_manual_resume() {
+        let mut app = App::new(false);
+        press(&mut app, ' ');
+        advance(&mut app, 10);
+        assert!(app.accumulator > 0);
+        app.focus_lost();
+        let frozen = app.game.clone();
+        assert_eq!(app.phase, Phase::Paused);
+        assert_eq!(app.accumulator, 0);
+        advance(&mut app, 5000);
+        assert_eq!(app.game, frozen);
+        app.advance(Duration::ZERO, true);
+        app.focus_lost();
+        app.advance(Duration::from_secs(1), false);
+        assert_eq!(app.phase, Phase::Paused);
+        assert_eq!(app.game, frozen);
+        press(&mut app, 'p');
+        assert_eq!(app.phase, Phase::Playing);
+        advance(&mut app, 10);
+        assert!(app.game.time > frozen.time);
+    }
+
+    #[test]
+    fn focus_loss_preserves_other_phases_and_does_not_interrupt_demo() {
+        for phase in [Phase::Title, Phase::Paused, Phase::GameOver] {
+            let mut app = App::new(false);
+            app.phase = phase;
+            app.focus_lost();
+            assert_eq!(app.phase, phase);
+        }
+        let mut demo = App::new(true);
+        press(&mut demo, ' ');
+        demo.focus_lost();
+        assert_eq!(demo.phase, Phase::Playing);
+        advance(&mut demo, 10);
+        assert!(demo.game.time > 0.0);
+    }
+
+    #[test]
+    fn fixed_seed_repeats_the_course_on_retry_and_default_runs_still_change() {
+        for seed in [0, 42, u64::MAX] {
+            let mut app = App::with_seed(false, Some(seed));
+            press(&mut app, ' ');
+            assert_eq!(app.game, Game::new(seed));
+            let first = app.game.clone();
+            advance(&mut app, 50);
+            app.phase = Phase::GameOver;
+            press(&mut app, 'r');
+            assert_eq!(app.game, first);
+            assert_eq!(app.challenge_seed, Some(seed));
+            assert_eq!(app.game.velocity, 0.0);
+        }
+        let mut app = App::new(false);
+        press(&mut app, ' ');
+        let first = app.game.gates.clone();
+        app.phase = Phase::GameOver;
+        press(&mut app, 'r');
+        assert_ne!(app.game.gates, first);
+    }
+
+    #[test]
     fn pause_toggle_does_not_repeat_and_esc_resumes() {
         let mut app = App::new(false);
         press(&mut app, ' ');
@@ -370,6 +451,8 @@ mod tests {
         advance(&mut app, 10);
         assert_eq!(app.phase, Phase::GameOver);
         assert_eq!(app.best, 17);
+        assert!(app.new_best);
+        assert!(app.score_save_failed);
         assert_eq!(app.game.score, 17);
         let death_time = app.game.death_time;
         advance(&mut app, 100);
@@ -382,7 +465,34 @@ mod tests {
         assert_eq!(app.phase, Phase::Playing);
         assert_eq!(app.game.velocity, 0.0);
         assert_eq!(app.best, 17);
+        assert!(!app.new_best);
+        assert!(app.score_save_failed);
         assert_eq!(std::fs::read_to_string(blocker).unwrap(), "unchanged");
+        // A later game-over retries the unsaved record, even without beating it.
+        let path = dir.0.join("recovered/best-score");
+        app.score_path = Some(path.clone());
+        app.game.alive = false;
+        advance(&mut app, 10);
+        assert!(!app.score_save_failed);
+        assert!(!app.new_best);
+        assert_eq!(storage::load(&path), 17);
+    }
+
+    #[test]
+    fn missing_storage_is_reported_and_a_tied_best_is_not_a_new_record() {
+        let mut app = App::new(false);
+        press(&mut app, ' ');
+        app.game.score = 10;
+        app.game.alive = false;
+        advance(&mut app, 10);
+        assert!(app.new_best);
+        assert!(app.score_save_failed);
+        press(&mut app, 'r');
+        app.game.score = 10;
+        app.game.alive = false;
+        advance(&mut app, 10);
+        assert!(!app.new_best);
+        assert!(app.score_save_failed);
     }
 
     #[test]
@@ -397,6 +507,8 @@ mod tests {
             app.game.alive = false;
             advance(&mut app, 10);
             assert_eq!(app.best, 23);
+            assert_eq!(app.new_best, !demo);
+            assert!(!app.score_save_failed);
             assert_eq!(path.exists(), !demo);
             if !demo {
                 assert_eq!(storage::load(&path), 23);

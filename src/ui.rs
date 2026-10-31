@@ -36,6 +36,26 @@ pub fn draw(frame: &mut Frame, app: &App) {
         }
         _ => playground(frame, app),
     }
+    let score_card = app.phase == Phase::GameOver && app.game.death_time >= 0.35;
+    if area.height >= 6 && (app.phase == Phase::Title || score_card) {
+        if let Some(seed) = app.challenge_seed {
+            frame.render_widget(
+                Line::styled(format!("SEED {seed} · fixed retries"), MUTED).centered(),
+                Rect::new(area.x, area.bottom() - 4, area.width, 1),
+            );
+        }
+        if score_card && (app.new_best || app.score_save_failed) {
+            let message = match (app.new_best, app.score_save_failed) {
+                (true, true) => "NEW BEST · Best score not saved",
+                (_, true) => "Best score not saved",
+                _ => "NEW BEST",
+            };
+            frame.render_widget(
+                Line::styled(message, Style::new().fg(CANDLE).bold()).centered(),
+                Rect::new(area.x, area.bottom() - 2, area.width, 1),
+            );
+        }
+    }
     if app.too_small {
         overlay(
             frame,
@@ -49,7 +69,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
         overlay(
             frame,
             " PAUSED ",
-            "Even pumpkins need a breath.\n\nP / Escape to resume · Q to quit",
+            "Flight paused.\n\nP / Escape to resume · Q to quit",
         );
     }
 }
@@ -71,6 +91,12 @@ fn playground(frame: &mut Frame, app: &App) {
         Span::styled(if app.demo { "   • DEMO" } else { "" }, PURPLE),
     ]);
     frame.render_widget(hud, Rect::new(area.x, area.y - 2, area.width, 1));
+    if let Some(seed) = app.challenge_seed {
+        frame.render_widget(
+            Line::styled(format!("SEED {seed}"), MUTED).centered(),
+            Rect::new(area.x, area.y - 1, area.width, 1),
+        );
+    }
     let buf = frame.buffer_mut();
     cemetery(buf, area, game.time);
     for gate in &game.gates {
@@ -448,6 +474,48 @@ mod tests {
                 app.game.tick(1.0 / 120.0);
                 assert!(!app.game.alive);
             }
+        }
+    }
+
+    #[test]
+    fn challenge_seed_and_record_status_keep_scores_and_actions_visible() {
+        for (w, h) in [(80, 28), (100, 30), (160, 50)] {
+            let mut terminal = Terminal::new(TestBackend::new(w, h)).unwrap();
+            let mut app = App::with_seed(false, Some(u64::MAX));
+            for phase in [Phase::Title, Phase::Playing, Phase::Paused, Phase::GameOver] {
+                app.phase = phase;
+                app.game.death_time = 1.0;
+                app.game.score = 23;
+                app.best = 23;
+                app.new_best = true;
+                app.score_save_failed = true;
+                terminal.draw(|f| draw(f, &app)).unwrap();
+                let text: String = terminal
+                    .backend()
+                    .buffer()
+                    .content
+                    .iter()
+                    .map(|cell| cell.symbol())
+                    .collect();
+                assert!(text.contains("SEED 18446744073709551615"));
+                if phase == Phase::GameOver {
+                    assert!(text.contains("SCORE 23"));
+                    assert!(text.contains("BEST 23"));
+                    assert!(text.contains("Space/R restart"));
+                    assert!(text.contains("NEW BEST · Best score not saved"));
+                }
+            }
+            app.score_save_failed = false;
+            terminal.draw(|f| draw(f, &app)).unwrap();
+            let text: String = terminal
+                .backend()
+                .buffer()
+                .content
+                .iter()
+                .map(|cell| cell.symbol())
+                .collect();
+            assert!(text.contains("NEW BEST"));
+            assert!(!text.contains("not saved"));
         }
     }
 
